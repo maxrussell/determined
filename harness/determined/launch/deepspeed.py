@@ -7,23 +7,26 @@ import argparse
 import logging
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import time
-from typing import List
+from typing import List, Optional
 
+import deepspeed
 from deepspeed.launcher.runner import DEEPSPEED_ENVIRONMENT_NAME
+from packaging import version
 
 import determined as det
 from determined import constants, util
 from determined.common import api
 from determined.common.api import certs
 
-hostfile_path = "/tmp/hostfile.txt"
+deepspeed_version = version.parse(deepspeed.__version__)
 
 
 def create_hostlist_file(
-    hostfile_path: pathlib.Path, num_proc_per_machine: int, ip_addresses: List[str]
+    hostfile_path: Optional[str], num_proc_per_machine: int, ip_addresses: List[str]
 ) -> str:
     trial_runner_hosts = ip_addresses.copy()
     # In the single node case, deepspeed doesn't use pdsh so we don't need to launch sshd.
@@ -31,10 +34,11 @@ def create_hostlist_file(
     if len(ip_addresses) == 1:
         trial_runner_hosts[0] = "localhost"
 
-    os.makedirs(hostfile_path.parent, exist_ok=True)
-    with open(hostfile_path, "w") as hostfile:
-        lines = [f"{host} slots={num_proc_per_machine}\n" for host in trial_runner_hosts]
-        hostfile.writelines(lines)
+    if hostfile_path is not None:
+        os.makedirs(pathlib.Path(hostfile_path).parent, exist_ok=True)
+        with open(hostfile_path, "w") as hostfile:
+            lines = [f"{host} slots={num_proc_per_machine}\n" for host in trial_runner_hosts]
+            hostfile.writelines(lines)
     return trial_runner_hosts[0]
 
 
@@ -100,28 +104,41 @@ def create_deepspeed_env_file() -> None:
         environ = os.environ.copy()
         for k, v in environ.items():
             if k in INCLUDE:
-                f.write(f"{k}={v}\n")
+                if deepspeed_version >= version.parse("0.6.2"):
+                    f.write(f"{k}={shlex.quote(v)}\n")
+                else:
+                    f.write(f"{k}={v}\n")
 
 
-def create_run_command(master_address: str, hostfile_path: str) -> List[str]:
+def create_run_command(master_address: str, hostfile_path: Optional[str]) -> List[str]:
     # Construct the deepspeed command.
-    deepspeed_process_cmd = [
-        "deepspeed",
-        "-H",
-        hostfile_path,
-        "--master_addr",
-        master_address,
-        "--no_python",
-        "--no_local_rank",
-        "--",
-    ]
+    deepspeed_process_cmd = ["deepspeed"]
+    if hostfile_path is not None:
+        deepspeed_process_cmd += ["-H", hostfile_path]
+    deepspeed_process_cmd += ["--master_addr", master_address, "--no_python", "--no_local_rank"]
+    if deepspeed_version > version.parse("0.6.4"):
+        deepspeed_process_cmd.append("--no_ssh_check")
+    deepspeed_process_cmd.append("--")
     return deepspeed_process_cmd
+
+
+def check_deepspeed_version(multi_machine: bool) -> None:
+    if multi_machine:
+        compatible = True
+        if deepspeed_version > version.parse("0.6.0") and deepspeed_version <= version.parse(
+            "0.6.4"
+        ):
+            compatible = False
+        assert compatible, f"launcher incompatible with deepspeed version {deepspeed.__version__}"
 
 
 def main(script: List[str]) -> int:
     info = det.get_cluster_info()
     assert info is not None, "must be run on-cluster"
     assert info.task_type == "TRIAL", f'must be run with task_type="TRIAL", not "{info.task_type}"'
+
+    multi_machine = len(info.container_addrs) > 1
+    check_deepspeed_version(multi_machine)
 
     # Hack: get the resources id from the environment.
     resources_id = os.environ.get("DET_RESOURCES_ID")
@@ -177,8 +194,10 @@ def main(script: List[str]) -> int:
 
     pid_server_cmd = create_pid_server_cmd(info.allocation_id, len(info.slot_ids))
 
+    hostfile_path = "/tmp/hostfile.txt" if multi_machine else None
+
     master_address = create_hostlist_file(
-        hostfile_path=pathlib.Path(hostfile_path),
+        hostfile_path=hostfile_path,
         num_proc_per_machine=len(info.slot_ids),
         ip_addresses=info.container_addrs,
     )
@@ -194,7 +213,6 @@ def main(script: List[str]) -> int:
 
     full_cmd = pid_server_cmd + cmd + pid_client_cmd + log_redirect_cmd + harness_cmd
 
-    multi_machine = len(info.container_addrs) > 1
     if not multi_machine:
         return subprocess.Popen(full_cmd).wait()
 
