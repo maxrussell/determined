@@ -357,7 +357,7 @@ export const encodeExperimentState = (state: types.RunState): Sdk.Determinedexpe
   return Sdk.Determinedexperimentv1State.UNSPECIFIED;
 };
 
-export const mapV1GetExperimentResponse = (
+export const mapV1GetExperimentDetailsResponse = (
   { experiment: exp, config, jobSummary }: Sdk.V1GetExperimentResponse,
 ): types.ExperimentBase => {
   const ioConfig = ioTypes
@@ -378,6 +378,10 @@ export const mapV1GetExperimentResponse = (
     config: ioToExperimentConfig(ioConfig),
     configRaw: config,
     hyperparameters,
+    parentArchived: exp.parentArchived ?? false,
+    projectName: exp.projectName ?? '',
+    workspaceId: exp.workspaceId ?? 0,
+    workspaceName: exp.workspaceName ?? '',
   };
 };
 
@@ -395,7 +399,6 @@ export const mapV1Experiment = (
     name: data.name,
     notes: data.notes,
     numTrials: data.numTrials || 0,
-    parentArchived: data.parentArchived || false,
     progress: data.progress != null ? data.progress : undefined,
     projectId: data.projectId,
     resourcePool: data.resourcePool || '',
@@ -608,5 +611,6 @@ export const mapV1Project = (data: Sdk.V1Project): types.Project => {
     numExperiments: data.numExperiments,
     username: data.username,
     workspaceId: data.workspaceId,
+    workspaceName: data.workspaceName ?? '',
   };
 };

@@ -1,6 +1,6 @@
 import { EditOutlined } from '@ant-design/icons';
 import { Button, Card, Space, Tooltip } from 'antd';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Prompt, useLocation } from 'react-router-dom';
 
 import handleError, { ErrorType } from 'utils/error';
@@ -13,6 +13,7 @@ import Spinner from './Spinner';
 interface Props {
   disabled?: boolean;
   extra?: React.ReactNode;
+  noteChangeSignal?: number;
   notes: string;
   onChange?: (editedNotes: string) => void;
   onSave?: (editedNotes: string) => Promise<void>;
@@ -24,13 +25,26 @@ interface Props {
 const NotesCard: React.FC<Props> = (
   {
     disabled = false, notes, onSave, onSaveTitle,
-    style, title = 'Notes', extra, onChange,
+    style, title = 'Notes', extra, onChange, noteChangeSignal,
   }: Props,
 ) => {
   const [ isEditing, setIsEditing ] = useState(false);
   const [ isLoading, setIsLoading ] = useState(false);
   const [ editedNotes, setEditedNotes ] = useState(notes);
   const location = useLocation();
+
+  const existingNotes = useRef(notes);
+
+  useEffect(() => {
+    existingNotes.current = notes;
+  }, [ notes ]);
+
+  useEffect(() => {
+    setIsEditing(false);
+    setIsLoading(false);
+    setEditedNotes(existingNotes.current);
+    // titleRef.current.focus();
+  }, [ noteChangeSignal ]);
 
   const editNotes = useCallback(() => {
     if (disabled) return;
@@ -95,7 +109,9 @@ const NotesCard: React.FC<Props> = (
       style={{ height: isEditing ? '500px' : '100%', ...style }}
       title={(
         <InlineEditor
-          disabled={!onSaveTitle || !isEditing}
+          disabled={!onSaveTitle || disabled}
+          focusSignal={noteChangeSignal}
+          style={{ paddingLeft: '5px', paddingRight: '5px' }}
           value={title}
           onSave={onSaveTitle}
         />
@@ -105,7 +121,7 @@ const NotesCard: React.FC<Props> = (
           editing={isEditing}
           markdown={isEditing ? editedNotes : notes}
           onChange={handleEditedNotes}
-          onClick={() => { if (notes === '') editNotes(); }}
+          onClick={(e: React.MouseEvent) => { if (e.detail > 1 || notes === '') editNotes(); }}
         />
       </Spinner>
       <Prompt

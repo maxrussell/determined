@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom';
 
 import Badge, { BadgeType } from 'components/Badge';
+import ExperimentActionDropdown from 'components/ExperimentActionDropdown';
 import FilterCounter from 'components/FilterCounter';
 import Icon from 'components/Icon';
 import InlineEditor from 'components/InlineEditor';
@@ -22,14 +23,15 @@ import TableBatch from 'components/TableBatch';
 import TableFilterDropdown from 'components/TableFilterDropdown';
 import TableFilterSearch from 'components/TableFilterSearch';
 import TagList from 'components/TagList';
-import TaskActionDropdown from 'components/TaskActionDropdown';
-import { cancellableRunStates, deletableRunStates,
-  pausableRunStates, terminalRunStates } from 'constants/states';
 import { useStore } from 'contexts/Store';
 import useExperimentTags from 'hooks/useExperimentTags';
 import { useFetchUsers } from 'hooks/useFetch';
 import useModalProjectNoteDelete from 'hooks/useModal/Project/useModalProjectNoteDelete';
 import useModalCustomizeColumns from 'hooks/useModal/useModalCustomizeColumns';
+import useModalExperimentMove, {
+  Settings as MoveExperimentSettings,
+  settingsConfig as moveExperimentSettingsConfig,
+} from 'hooks/useModal/useModalExperimentMove';
 import usePolling from 'hooks/usePolling';
 import useSettings, { UpdateSettings } from 'hooks/useSettings';
 import { paths } from 'routes/utils';
@@ -44,11 +46,14 @@ import { encodeExperimentState } from 'services/decoder';
 import { isNotFound, validateDetApiEnum, validateDetApiEnumList } from 'services/utils';
 import Message, { MessageType } from 'shared/components/message';
 import { ExperimentAction as Action, CommandTask, ExperimentItem,
-  Note, Project, RecordKey, RunState } from 'types';
+  Note, Project, ProjectExperiment, RecordKey, RunState } from 'types';
 import { isEqual } from 'utils/data';
 import handleError, { ErrorLevel } from 'utils/error';
+import {
+  getActionsForExperimentsUnion,
+  getProjectExperimentForExperimentItem,
+} from 'utils/experiment';
 import { alphaNumericSorter } from 'utils/sort';
-import { isTaskKillable, taskFromExperiment } from 'utils/task';
 import { getDisplayName } from 'utils/user';
 import { openCommand } from 'wait';
 
@@ -56,7 +61,6 @@ import css from './ProjectDetails.module.scss';
 import settingsConfig, { DEFAULT_COLUMN_WIDTHS, DEFAULT_COLUMNS,
   ExperimentColumnName, ProjectDetailsSettings } from './ProjectDetails.settings';
 import ProjectDetailsTabs, { TabInfo } from './ProjectDetails/ProjectDetailsTabs';
-
 const filterKeys: Array<keyof ProjectDetailsSettings> = [ 'label', 'search', 'state', 'user' ];
 
 /*
@@ -70,6 +74,18 @@ interface Params {
   projectId: string;
 }
 
+const batchActions = [
+  Action.OpenTensorBoard,
+  Action.Activate,
+  Action.Move,
+  Action.Pause,
+  Action.Archive,
+  Action.Unarchive,
+  Action.Cancel,
+  Action.Kill,
+  Action.Delete,
+];
+
 const ProjectDetails: React.FC = () => {
   const { users, auth: { user } } = useStore();
   const { projectId } = useParams<Params>();
@@ -82,6 +98,14 @@ const ProjectDetails: React.FC = () => {
   const [ canceler ] = useState(new AbortController());
   const pageRef = useRef<HTMLElement>(null);
 
+  const { updateSettings: updateDestinationSettings } = useSettings<MoveExperimentSettings>(
+    moveExperimentSettingsConfig,
+  );
+
+  useEffect(() => {
+    updateDestinationSettings({ projectId: undefined, workspaceId: project?.workspaceId });
+  }, [ updateDestinationSettings, project?.workspaceId ]);
+
   const id = parseInt(projectId);
 
   const {
@@ -93,50 +117,19 @@ const ProjectDetails: React.FC = () => {
 
   const experimentMap = useMemo(() => {
     return (experiments || []).reduce((acc, experiment) => {
-      acc[experiment.id] = experiment;
+      acc[experiment.id] = getProjectExperimentForExperimentItem(experiment, project);
       return acc;
-    }, {} as Record<RecordKey, ExperimentItem>);
-  }, [ experiments ]);
+    }, {} as Record<RecordKey, ProjectExperiment>);
+  }, [
+    experiments,
+    project,
+  ]);
 
   const filterCount = useMemo(() => activeSettings(filterKeys).length, [ activeSettings ]);
 
-  const {
-    hasActivatable,
-    hasArchivable,
-    hasCancelable,
-    hasDeletable,
-    hasKillable,
-    hasPausable,
-    hasUnarchivable,
-  } = useMemo(() => {
-    const tracker = {
-      hasActivatable: false,
-      hasArchivable: false,
-      hasCancelable: false,
-      hasDeletable: false,
-      hasKillable: false,
-      hasPausable: false,
-      hasUnarchivable: false,
-    };
-    for (const id of settings.row || []) {
-      const experiment = experimentMap[id];
-      if (!experiment) continue;
-      const isArchivable = !experiment.archived && terminalRunStates.has(experiment.state);
-      const isCancelable = cancellableRunStates.has(experiment.state);
-      const isDeletable = deletableRunStates.has(experiment.state) &&
-        user && (user.isAdmin || user.username === experiment.username);
-      const isKillable = isTaskKillable(experiment);
-      const isActivatable = experiment.state === RunState.Paused;
-      const isPausable = pausableRunStates.has(experiment.state);
-      if (!tracker.hasArchivable && isArchivable) tracker.hasArchivable = true;
-      if (!tracker.hasUnarchivable && experiment.archived) tracker.hasUnarchivable = true;
-      if (!tracker.hasCancelable && isCancelable) tracker.hasCancelable = true;
-      if (!tracker.hasDeletable && isDeletable) tracker.hasDeletable = true;
-      if (!tracker.hasKillable && isKillable) tracker.hasKillable = true;
-      if (!tracker.hasActivatable && isActivatable) tracker.hasActivatable = true;
-      if (!tracker.hasPausable && isPausable) tracker.hasPausable = true;
-    }
-    return tracker;
+  const availableBatchActions = useMemo(() => {
+    const experiments = settings.row?.map(id => experimentMap[id]) ?? [];
+    return getActionsForExperimentsUnion(experiments, batchActions, user);
   }, [ experimentMap, settings.row, user ]);
 
   const fetchProject = useCallback(async () => {
@@ -319,18 +312,21 @@ const ProjectDetails: React.FC = () => {
     const tagsRenderer = (value: string, record: ExperimentItem) => (
       <TagList
         compact
+        disabled={record.archived || project?.archived}
         tags={record.labels}
         onChange={experimentTags.handleTagListChange(record.id)}
       />
     );
 
-    const actionRenderer: ExperimentRenderer = (_, record) => (
-      <TaskActionDropdown
-        curUser={user}
-        task={taskFromExperiment(record)}
-        onComplete={handleActionComplete}
-      />
-    );
+    const actionRenderer: ExperimentRenderer = (_, record) => {
+      return (
+        <ExperimentActionDropdown
+          curUser={user}
+          experiment={getProjectExperimentForExperimentItem(record, project)}
+          onComplete={handleActionComplete}
+        />
+      );
+    };
 
     const descriptionRenderer = (value:string, record: ExperimentItem) => (
       <InlineEditor
@@ -508,6 +504,7 @@ const ProjectDetails: React.FC = () => {
     nameFilterSearch,
     saveExperimentDescription,
     settings,
+    project,
     stateFilterDropdown,
     tableSearchIcon,
     userFilterDropdown,
@@ -543,9 +540,19 @@ const ProjectDetails: React.FC = () => {
       .map((column) => column.dataIndex?.toString() ?? '');
   }, [ columns ]);
 
-  const sendBatchActions = useCallback((action: Action): Promise<void[] | CommandTask> => {
+  const { modalOpen: openMoveModal } = useModalExperimentMove({ onClose: handleActionComplete });
+
+  const sendBatchActions = useCallback((action: Action): Promise<void[] | CommandTask> | void => {
+    if (!settings.row) return;
     if (action === Action.OpenTensorBoard) {
       return openOrCreateTensorBoard({ experimentIds: settings.row });
+    }
+    if (action === Action.Move) {
+      return openMoveModal({
+        experimentIds: settings.row,
+        sourceProjectId: project?.id,
+        sourceWorkspaceId: project?.workspaceId,
+      });
     }
     return Promise.all((settings.row || []).map(experimentId => {
       switch (action) {
@@ -567,7 +574,7 @@ const ProjectDetails: React.FC = () => {
           return Promise.resolve();
       }
     }));
-  }, [ settings.row ]);
+  }, [ settings.row, openMoveModal, project?.workspaceId, project?.id ]);
 
   const submitBatchAction = useCallback(async (action: Action) => {
     try {
@@ -654,15 +661,11 @@ const ProjectDetails: React.FC = () => {
     onSave: (handleUpdateColumns as (columns: string[]) => void),
   });
 
-  const resetColumnWidths = useCallback(
-    () =>
-      updateSettings({ columnWidths: settings.columns.map((col) => DEFAULT_COLUMN_WIDTHS[col]) }),
-    [ settings.columns, updateSettings ],
-  );
-
   const handleCustomizeColumnsClick = useCallback(() => {
-    openCustomizeColumns({ initialVisibleColumns: settings.columns });
-  }, [ openCustomizeColumns, settings.columns ]);
+    openCustomizeColumns(
+      { initialVisibleColumns: settings.columns?.filter((col) => transferColumns.includes(col)) },
+    );
+  }, [ openCustomizeColumns, settings.columns, transferColumns ]);
 
   const switchShowArchived = useCallback((showArchived: boolean) => {
     let newColumns: ExperimentColumnName[];
@@ -757,17 +760,19 @@ const ProjectDetails: React.FC = () => {
     return () => canceler.abort();
   }, [ canceler ]);
 
-  const ExperimentActionDropdown = useCallback(
-    ({ record, onVisibleChange, children }) => (
-      <TaskActionDropdown
-        curUser={user}
-        task={taskFromExperiment(record)}
-        onComplete={handleActionComplete}
-        onVisibleChange={onVisibleChange}>
-        {children}
-      </TaskActionDropdown>
-    ),
-    [ user, handleActionComplete ],
+  const ContextMenu = useCallback(
+    ({ record, onVisibleChange, children }) => {
+      return (
+        <ExperimentActionDropdown
+          curUser={user}
+          experiment={getProjectExperimentForExperimentItem(record, project)}
+          onComplete={handleActionComplete}
+          onVisibleChange={onVisibleChange}>
+          {children}
+        </ExperimentActionDropdown>
+      );
+    },
+    [ user, handleActionComplete, project ],
   );
 
   const ExperimentTabOptions = useMemo(() => {
@@ -777,7 +782,6 @@ const ProjectDetails: React.FC = () => {
           <Switch checked={settings.archived} onChange={switchShowArchived} />
           <Label type={LabelTypes.TextOnly}>Show Archived</Label>
           <Button onClick={handleCustomizeColumnsClick}>Columns</Button>
-          <Button onClick={resetColumnWidths}>Reset Widths</Button>
           <FilterCounter activeFilterCount={filterCount} onReset={resetFilters} />
         </Space>
         <div className={css.actionOverflow} title="Open actions menu">
@@ -790,7 +794,6 @@ const ProjectDetails: React.FC = () => {
                   {settings.archived ? 'Hide Archived' : 'Show Archived'}
                 </Menu.Item>
                 <Menu.Item key="columns" onClick={handleCustomizeColumnsClick}>Columns</Menu.Item>
-                <Menu.Item key="resetWidths" onClick={resetColumnWidths}>Reset Widths</Menu.Item>
                 {filterCount > 0 && (
                   <Menu.Item key="resetFilters" onClick={resetFilters}>
                     Clear Filters ({filterCount})
@@ -809,7 +812,6 @@ const ProjectDetails: React.FC = () => {
     );
   }, [ filterCount,
     handleCustomizeColumnsClick,
-    resetColumnWidths,
     resetFilters,
     settings.archived,
     switchShowArchived ]);
@@ -819,16 +821,11 @@ const ProjectDetails: React.FC = () => {
       body: (
         <div className={css.experimentTab}>
           <TableBatch
-            actions={[
-              { label: Action.OpenTensorBoard, value: Action.OpenTensorBoard },
-              { disabled: !hasActivatable, label: Action.Activate, value: Action.Activate },
-              { disabled: !hasPausable, label: Action.Pause, value: Action.Pause },
-              { disabled: !hasArchivable, label: Action.Archive, value: Action.Archive },
-              { disabled: !hasUnarchivable, label: Action.Unarchive, value: Action.Unarchive },
-              { disabled: !hasCancelable, label: Action.Cancel, value: Action.Cancel },
-              { disabled: !hasKillable, label: Action.Kill, value: Action.Kill },
-              { disabled: !hasDeletable, label: Action.Delete, value: Action.Delete },
-            ]}
+            actions={batchActions.map((action) => ({
+              disabled: !availableBatchActions.includes(action),
+              label: action,
+              value: action,
+            }))}
             selectedRowCount={(settings.row ?? []).length}
             onAction={handleBatchAction}
             onClear={clearSelected}
@@ -837,7 +834,7 @@ const ProjectDetails: React.FC = () => {
             areRowsSelected={!!settings.row}
             columns={columns}
             containerRef={pageRef}
-            ContextMenu={ExperimentActionDropdown}
+            ContextMenu={ContextMenu}
             dataSource={experiments}
             loading={isLoading}
             pagination={getFullPaginationConfig({
@@ -863,6 +860,7 @@ const ProjectDetails: React.FC = () => {
     }, {
       body: (
         <PaginatedNotesCard
+          disabled={project?.archived}
           notes={project?.notes ?? []}
           onDelete={handleDeleteNote}
           onNewPage={handleNewNotesPage}
@@ -874,7 +872,7 @@ const ProjectDetails: React.FC = () => {
         </div>),
       title: 'Notes',
     } ]);
-  }, [ ExperimentActionDropdown,
+  }, [ ContextMenu,
     ExperimentTabOptions,
     clearSelected,
     columns,
@@ -884,15 +882,10 @@ const ProjectDetails: React.FC = () => {
     handleNewNotesPage,
     handleSaveNotes,
     handleTableRowSelect,
-    hasActivatable,
-    hasArchivable,
-    hasCancelable,
-    hasDeletable,
-    hasKillable,
-    hasPausable,
-    hasUnarchivable,
+    availableBatchActions,
     isLoading,
     project?.notes,
+    project?.archived,
     settings,
     total,
     updateSettings ]);

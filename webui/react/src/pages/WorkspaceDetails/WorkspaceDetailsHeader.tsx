@@ -7,7 +7,9 @@ import InlineEditor from 'components/InlineEditor';
 import WorkspaceIcon from 'components/WorkspaceIcon';
 import useModalProjectCreate from 'hooks/useModal/Project/useModalProjectCreate';
 import WorkspaceActionDropdown from 'pages/WorkspaceList/WorkspaceActionDropdown';
+import { patchWorkspace } from 'services/api';
 import { DetailedUser, Workspace } from 'types';
+import handleError, { ErrorLevel, ErrorType } from 'utils/error';
 
 import css from './WorkspaceDetailsHeader.module.scss';
 
@@ -24,6 +26,21 @@ const WorkspaceDetailsHeader: React.FC<Props> = ({ workspace, curUser, fetchWork
     openProjectCreate();
   }, [ openProjectCreate ]);
 
+  const handleNameChange = useCallback(async (name: string) => {
+    try {
+      await patchWorkspace({ id: workspace.id, name: name });
+    } catch (e) {
+      handleError(e, {
+        level: ErrorLevel.Error,
+        publicMessage: 'Please try again later.',
+        publicSubject: 'Unable to edit workspace.',
+        silent: false,
+        type: ErrorType.Server,
+      });
+      return e as Error;
+    }
+  }, [ workspace.id ]);
+
   return (
     <div className={css.base}>
       <Space align="center">
@@ -32,9 +49,11 @@ const WorkspaceDetailsHeader: React.FC<Props> = ({ workspace, curUser, fetchWork
           <h1 className={css.name}>
             <InlineEditor
               disabled={workspace.immutable ||
-                (!curUser?.isAdmin && curUser?.username !== workspace.username)}
+                 workspace.archived
+                || (!curUser?.isAdmin && curUser?.username !== workspace.username)}
               maxLength={80}
               value={workspace.name}
+              onSave={handleNameChange}
             />
           </h1>
           {workspace.archived && (

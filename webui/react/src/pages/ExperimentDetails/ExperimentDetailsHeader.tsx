@@ -11,7 +11,6 @@ import TagList from 'components/TagList';
 import TimeAgo from 'components/TimeAgo';
 import TimeDuration from 'components/TimeDuration';
 import {
-  deletableRunStates,
   pausableRunStates,
   stateToLabel,
   terminalRunStates,
@@ -21,6 +20,7 @@ import useModalExperimentCreate, {
   CreateExperimentType,
 } from 'hooks/useModal/useModalExperimentCreate';
 import useModalExperimentDelete from 'hooks/useModal/useModalExperimentDelete';
+import useModalExperimentMove from 'hooks/useModal/useModalExperimentMove';
 import useModalExperimentStop from 'hooks/useModal/useModalExperimentStop';
 import ExperimentHeaderProgress from 'pages/ExperimentDetails/Header/ExperimentHeaderProgress';
 import { handlePath, paths } from 'routes/utils';
@@ -31,9 +31,16 @@ import {
   unarchiveExperiment,
 } from 'services/api';
 import { getStateColorCssVar } from 'themes';
-import { DetailedUser, ExperimentBase, RecordKey, RunState, TrialDetails } from 'types';
+import {
+  ExperimentAction as Action,
+  DetailedUser,
+  ExperimentBase,
+  RunState,
+  TrialDetails,
+} from 'types';
 import { getDuration } from 'utils/datetime';
 import handleError, { ErrorLevel, ErrorType } from 'utils/error';
+import { canUserActionExperiment, getActionsForExperiment } from 'utils/experiment';
 import { openCommand } from 'wait';
 
 import css from './ExperimentDetailsHeader.module.scss';
@@ -44,6 +51,17 @@ interface Props {
   fetchExperimentDetails: () => void;
   trial?: TrialDetails;
 }
+
+const headerActions = [
+  Action.Fork,
+  Action.ContinueTrial,
+  Action.Move,
+  Action.OpenTensorBoard,
+  Action.DownloadCode,
+  Action.Archive,
+  Action.Unarchive,
+  Action.Delete,
+];
 
 const ExperimentDetailsHeader: React.FC<Props> = ({
   curUser,
@@ -62,14 +80,20 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
 
   const handleModalClose = useCallback(() => fetchExperimentDetails(), [ fetchExperimentDetails ]);
 
+  const isMovable = canUserActionExperiment(curUser, Action.Move, experiment);
+
   const { modalOpen: openModalStop } = useModalExperimentStop({
     experimentId: experiment.id,
     onClose: handleModalClose,
   });
 
+  const { modalOpen: openModalMove } = useModalExperimentMove({ onClose: handleModalClose });
+
   const { modalOpen: openModalDelete } = useModalExperimentDelete({ experiment: experiment });
 
   const { modalOpen: openModalCreate } = useModalExperimentCreate();
+
+  const disabled = experiment?.parentArchived || experiment?.archived;
 
   const backgroundColor = useMemo(() => {
     return getStateColorCssVar(experiment.state);
@@ -115,8 +139,22 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
 
   const handleDeleteClick = useCallback(() => openModalDelete(), [ openModalDelete ]);
 
+  const handleMoveClick = useCallback(
+    () =>
+      openModalMove({
+        experimentIds: isMovable ? [ experiment.id ] : undefined,
+        sourceProjectId: experiment.projectId,
+        sourceWorkspaceId: experiment.workspaceId,
+      }),
+    [ openModalMove, experiment, isMovable ],
+  );
+
   const handleContinueTrialClick = useCallback(() => {
-    openModalCreate({ experiment, trial, type: CreateExperimentType.ContinueTrial });
+    openModalCreate({
+      experiment,
+      trial,
+      type: CreateExperimentType.ContinueTrial,
+    });
   }, [ experiment, openModalCreate, trial ]);
 
   const handleForkClick = useCallback(() => {
@@ -165,8 +203,8 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
   }, [ experiment.id, fetchExperimentDetails ]);
 
   const headerOptions = useMemo(() => {
-    const options: Record<RecordKey, Option> = {
-      archive: {
+    const options: Partial<Record<Action, Option>> = {
+      [Action.Unarchive]: {
         isLoading: isRunningArchive,
         key: 'unarchive',
         label: 'Unarchive',
@@ -180,19 +218,19 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
           }
         },
       },
-      continueTrial: {
+      [Action.ContinueTrial]: {
         key: 'continue-trial',
         label: 'Continue Trial',
         onClick: handleContinueTrialClick,
       },
-      delete: {
+      [Action.Delete]: {
         icon: <Icon name="fork" size="small" />,
         isLoading: isRunningDelete,
         key: 'delete',
         label: 'Delete',
         onClick: handleDeleteClick,
       },
-      downloadModel: {
+      [Action.DownloadCode]: {
         icon: <Icon name="download" size="small" />,
         key: 'download-model',
         label: 'Download Experiment Code',
@@ -200,14 +238,18 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
           handlePath(e, { external: true, path: paths.experimentModelDef(experiment.id) });
         },
       },
-      fork: {
-        disabled: experiment.archived || experiment.parentArchived,
+      [Action.Fork]: {
         icon: <Icon name="fork" size="small" />,
         key: 'fork',
         label: 'Fork',
         onClick: handleForkClick,
       },
-      tensorboard: {
+      [Action.Move]: {
+        key: 'move',
+        label: 'Move',
+        onClick: handleMoveClick,
+      },
+      [Action.OpenTensorBoard]: {
         icon: <Icon name="tensor-board" size="small" />,
         isLoading: isRunningTensorBoard,
         key: 'tensorboard',
@@ -223,7 +265,7 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
           }
         },
       },
-      unarchive: {
+      [Action.Archive]: {
         isLoading: isRunningUnarchive,
         key: 'archive',
         label: 'Archive',
@@ -238,33 +280,23 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
         },
       },
     };
-    return [
-      options.fork,
-      trial?.id && options.continueTrial,
-      options.tensorboard,
-      options.downloadModel,
-      terminalRunStates.has(experiment.state) && (
-        experiment.archived ? options.archive : options.unarchive
-      ),
-      deletableRunStates.has(experiment.state) &&
-        curUser && (curUser.isAdmin || curUser.username === experiment.username) && options.delete,
-    ].filter(option => !!option) as Option[];
+
+    const availableActions = getActionsForExperiment(experiment, headerActions, curUser);
+
+    return availableActions.map(action => options[action]) as Option[];
   }, [
     curUser,
     isRunningDelete,
-    experiment.archived,
-    experiment.id,
-    experiment.parentArchived,
-    experiment.state,
-    experiment.username,
+    experiment,
     fetchExperimentDetails,
     handleContinueTrialClick,
     handleDeleteClick,
     handleForkClick,
+    handleMoveClick,
     isRunningArchive,
     isRunningTensorBoard,
     isRunningUnarchive,
-    trial?.id,
+    // trial?.id,
   ]);
 
   const jobInfoLinkText = useMemo(() => {
@@ -290,6 +322,7 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
               <span className={css.foldableItemLabel}>Description:</span>
               <InlineEditor
                 allowNewline
+                disabled={disabled}
                 isOnDark
                 maxLength={500}
                 placeholder="Add description..."
@@ -315,6 +348,7 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
               </div>
             )}
             <TagList
+              disabled={disabled}
               ghost={true}
               tags={experiment.config.labels || []}
               onChange={experimentTags.handleTagListChange(experiment.id)}
@@ -360,6 +394,7 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
             </div>
             <div className={css.experimentName}>
               <InlineEditor
+                disabled={disabled}
                 isOnDark
                 maxLength={128}
                 placeholder="experiment name"

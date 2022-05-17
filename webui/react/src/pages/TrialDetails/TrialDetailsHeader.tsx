@@ -10,7 +10,8 @@ import useCreateExperimentModal, {
 import TrialHeaderLeft from 'pages/TrialDetails/Header/TrialHeaderLeft';
 import { openOrCreateTensorBoard } from 'services/api';
 import { getStateColorCssVar } from 'themes';
-import { ExperimentAction as Action, ExperimentBase, TrialDetails } from 'types';
+import { ExperimentAction as Action, ExperimentAction, ExperimentBase, TrialDetails } from 'types';
+import { canUserActionExperiment } from 'utils/experiment';
 import { getWorkload, isMetricsWorkload } from 'utils/workload';
 import { openCommand } from 'wait';
 
@@ -62,24 +63,27 @@ const TrialDetailsHeader: React.FC<Props> = ({
       });
     }
 
-    if (trial.bestAvailableCheckpoint !== undefined) {
-      options.push({
-        icon: <Icon name="fork" size="small" />,
-        key: Action.ContinueTrial,
-        label: 'Continue Trial',
-        onClick: handleContinueTrial,
-      });
-    } else {
-      options.push({
-        icon: <Icon name="fork" size="small" />,
-        key: Action.ContinueTrial,
-        label: 'Continue Trial',
-        tooltip: 'No checkpoints found. Cannot continue trial',
-      });
+    if (canUserActionExperiment(undefined, ExperimentAction.ContinueTrial, experiment)) {
+      if (trial.bestAvailableCheckpoint !== undefined) {
+        options.push({
+          icon: <Icon name="fork" size="small" />,
+          key: Action.ContinueTrial,
+          label: 'Continue Trial',
+          onClick: handleContinueTrial,
+        });
+      } else {
+        options.push({
+          icon: <Icon name="fork" size="small" />,
+          key: Action.ContinueTrial,
+          label: 'Continue Trial',
+          tooltip: 'No checkpoints found. Cannot continue trial',
+        });
+      }
     }
 
     return options;
   }, [
+    experiment,
     fetchTrialDetails,
     handleContinueTrial,
     isRunningTensorBoard,

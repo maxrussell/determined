@@ -29,6 +29,7 @@ const ExperimentDetails: React.FC = () => {
   const [ canceler ] = useState(new AbortController());
   const [ experiment, setExperiment ] = useState<ExperimentBase>();
   const [ trial, setTrial ] = useState<TrialDetails>();
+  /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
   const [ valHistory, setValHistory ] = useState<ValidationHistory[]>([]);
   const [ pageError, setPageError ] = useState<Error>();
   const [ isSingleTrial, setIsSingleTrial ] = useState<boolean>();
@@ -37,24 +38,24 @@ const ExperimentDetails: React.FC = () => {
 
   const fetchExperimentDetails = useCallback(async () => {
     try {
-      const [ experimentData, validationHistory ] = await Promise.all([
+      const [ newExperiment, newValHistory ] = await Promise.all([
         getExperimentDetails({ id }, { signal: canceler.signal }),
         getExpValidationHistory({ id }, { signal: canceler.signal }),
       ]);
-      if (!isEqual(experimentData, experiment)) setExperiment(experimentData);
-      if (!isEqual(validationHistory, valHistory)) setValHistory(validationHistory);
+      setExperiment((prevExperiment) =>
+        isEqual(prevExperiment, newExperiment) ? prevExperiment : newExperiment);
+      setValHistory((prevValHistory) =>
+        isEqual(prevValHistory, newValHistory) ? prevValHistory : newValHistory);
       setIsSingleTrial(
-        isSingleTrialExperiment(experimentData),
+        isSingleTrialExperiment(newExperiment),
       );
     } catch (e) {
       if (!pageError && !isAborted(e)) setPageError(e as Error);
     }
   }, [
-    experiment,
     id,
     canceler.signal,
     pageError,
-    valHistory,
   ]);
 
   const { stopPolling } = usePolling(fetchExperimentDetails);
