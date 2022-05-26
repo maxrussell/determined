@@ -12,10 +12,11 @@ proj AS (
   )
 ),
 exper AS (
-  UPDATE experiments
-  SET project_id = 1
+  SELECT COUNT(*) AS count
+  FROM experiments
   WHERE project_id IN (SELECT id FROM proj)
 )
 DELETE FROM projects
 WHERE id IN (SELECT id FROM proj)
+AND (SELECT count FROM exper) = 0
 RETURNING projects.id;
