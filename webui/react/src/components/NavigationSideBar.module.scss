@@ -36,7 +36,6 @@
     min-height: 0;
     overflow: hidden;
 
-
     .noWorkspaces {
       align-self: center;
       // color: #bfbfbf;
@@ -109,10 +108,10 @@
   }
   .navItemContainer {
     align-items: center;
+    background-color: var(--theme-stage);
     display: flex;
     flex-wrap: nowrap;
     width: var(--nav-side-bar-width-max);
-    background-color: var(--theme-stage);
 
     &.active {
       background-color: var(--theme-stage-strong);
@@ -141,6 +140,7 @@
       //   position: absolute;
       //   top: 12px;
       // }
+
       .label {
         font-size: 12px;
         height: 24px;
@@ -164,6 +164,7 @@
       flex-direction: column;
 
       // height: 100%;
+
       & a {
         align-items: center;
         display: flex;

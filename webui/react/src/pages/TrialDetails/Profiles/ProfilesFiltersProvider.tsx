@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import usePolling from 'hooks/usePolling';
 import useSettings from 'hooks/useSettings';
@@ -85,9 +85,8 @@ const ProfilesFiltersProvider: React.FC<Props> = ({ children, trial }: Props) =>
   }, [ settings.agentId, settings.name, systemSeries, updateSettings ]);
 
   const [ pollSignal, setPollSignal ] = useState(false);
-  usePolling(() => {
-    setPollSignal(prevPollSignal => !prevPollSignal);
-  }, { interval: 2000 });
+  const fireSignal = useCallback(() => setPollSignal(prevPollSignal => !prevPollSignal), []);
+  usePolling(fireSignal, { interval: 2000 });
 
   const context = useMemo<ProfilesFiltersContextInterface>(
     () =>

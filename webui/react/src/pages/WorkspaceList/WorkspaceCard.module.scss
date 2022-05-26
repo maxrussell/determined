@@ -55,8 +55,8 @@
 
     .action {
       background-color: var(--theme-surface);
-      display: flex;
       border-radius: 4px;
+      display: flex;
       padding: 2px;
     }
   }
@@ -77,9 +77,9 @@
     max-width: 100%;
 
     .projects {
-      white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .info {
       margin-left: 20px;

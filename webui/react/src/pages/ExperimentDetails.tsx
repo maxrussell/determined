@@ -59,7 +59,7 @@ const ExperimentDetails: React.FC = () => {
     pageError,
   ]);
 
-  const { stopPolling } = usePolling(fetchExperimentDetails);
+  const { stopPolling } = usePolling(fetchExperimentDetails, { rerunOnNewFn: true });
 
   const handleSingleTrialLoad = useCallback((trial: TrialDetails) => {
     setTrial(trial);

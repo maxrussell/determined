@@ -213,7 +213,7 @@ const ProjectDetails: React.FC = () => {
       fetchProject(), fetchExperiments(), fetchUsers(), fetchLabels() ]);
   }, [ fetchProject, fetchExperiments, fetchUsers, fetchLabels ]);
 
-  usePolling(fetchAll);
+  usePolling(fetchAll, { rerunOnNewFn: true });
 
   const experimentTags = useExperimentTags(fetchAll);
 

@@ -95,7 +95,7 @@ const BreadcrumbBar: React.FC<Props> = (
       fetchProject(), fetchWorkspace(), fetchExperiment(), fetchTrial() ]);
   }, [ fetchProject, fetchWorkspace, fetchExperiment, fetchTrial ]);
 
-  usePolling(fetchAll);
+  usePolling(fetchAll, { rerunOnNewFn: true });
 
   useEffect(() => {
     fetchWorkspace();

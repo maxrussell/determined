@@ -99,7 +99,7 @@ const WorkspaceList: React.FC = () => {
     settings.tableOffset,
     settings.user ]);
 
-  usePolling(fetchWorkspaces);
+  usePolling(fetchWorkspaces, { rerunOnNewFn: true });
 
   const handleViewSelect = useCallback((value) => {
     setWorkspaceFilter(value as WorkspaceFilters);

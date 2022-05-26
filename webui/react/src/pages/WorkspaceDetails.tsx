@@ -123,7 +123,7 @@ const WorkspaceDetails: React.FC = () => {
     await Promise.allSettled([ fetchWorkspace(), fetchProjects(), fetchUsers() ]);
   }, [ fetchWorkspace, fetchProjects, fetchUsers ]);
 
-  usePolling(fetchAll);
+  usePolling(fetchAll, { rerunOnNewFn: true });
 
   const handleViewSelect = useCallback((value) => {
     setProjectFilter(value as ProjectFilters);
